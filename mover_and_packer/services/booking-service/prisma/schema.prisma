@@ -1,0 +1,199 @@
+// Booking Service Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum VehicleType {
+  PICKUP
+  VAN
+  SMALL_TRUCK
+  MEDIUM_TRUCK
+  LARGE_TRUCK
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model Booking {
+  id                String          @id @default(uuid())
+  bookingNumber     String          @unique
+  userId            String
+  
+  // Pickup Details
+  pickupRegion      String
+  pickupCity        String
+  pickupSubcity     String?
+  pickupAddress     String
+  pickupLatitude    Float?
+  pickupLongitude   Float?
+  pickupDate        DateTime
+  pickupTime        String
+  pickupContact     String
+  
+  // Dropoff Details
+  dropoffRegion     String
+  dropoffCity       String
+  dropoffSubcity    String?
+  dropoffAddress    String
+  dropoffLatitude   Float?
+  dropoffLongitude  Float?
+  dropoffContact    String
+  
+  // Move Details
+  vehicleType       VehicleType
+  estimatedVolume   Float?
+  estimatedWeight   Float?
+  distance          Float?
+  requiresHelpers   Boolean         @default(false)
+  numberOfHelpers   Int             @default(0)
+  requiresPacking   Boolean         @default(false)
+  specialInstructions String?
+  
+  // Pricing
+  estimatedPrice    Float
+  finalPrice        Float?
+  currency          String          @default("ETB")
+  
+  // Assignment
+  driverId          String?
+  vehicleId         String?
+  assignedAt        DateTime?
+  
+  // Status
+  status            BookingStatus   @default(PENDING)
+  paymentStatus     PaymentStatus   @default(PENDING)
+  
+  // Tracking
+  startedAt         DateTime?
+  completedAt       DateTime?
+  cancelledAt       DateTime?
+  cancellationReason String?
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  items             BookingItem[]
+  tracking          TrackingUpdate[]
+  reviews           Review[]
+  
+  @@index([userId])
+  @@index([bookingNumber])
+  @@index([status])
+  @@index([driverId])
+  @@index([pickupDate])
+  @@map("bookings")
+}
+
+model BookingItem {
+  id                String          @id @default(uuid())
+  bookingId         String
+  booking           Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  name              String
+  category          String?
+  quantity          Int             @default(1)
+  weight            Float?
+  volume            Float?
+  fragile           Boolean         @default(false)
+  requiresDisassembly Boolean       @default(false)
+  imageUrl          String?
+  notes             String?
+  
+  createdAt         DateTime        @default(now())
+  
+  @@index([bookingId])
+  @@map("booking_items")
+}
+
+model TrackingUpdate {
+  id                String          @id @default(uuid())
+  bookingId         String
+  booking           Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  status            String
+  message           String
+  latitude          Float?
+  longitude         Float?
+  timestamp         DateTime        @default(now())
+  
+  @@index([bookingId])
+  @@index([timestamp])
+  @@map("tracking_updates")
+}
+
+model Review {
+  id                String          @id @default(uuid())
+  bookingId         String
+  booking           Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  userId            String
+  driverId          String
+  rating            Int
+  comment           String?
+  
+  // Detailed Ratings
+  punctualityRating Int?
+  professionalismRating Int?
+  careOfItemsRating Int?
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  @@index([bookingId])
+  @@index([userId])
+  @@index([driverId])
+  @@map("reviews")
+}
+
+model Vehicle {
+  id                String          @id @default(uuid())
+  driverId          String
+  
+  vehicleType       VehicleType
+  plateNumber       String          @unique
+  brand             String
+  model             String
+  year              Int
+  color             String?
+  
+  // Capacity
+  maxWeight         Float
+  maxVolume         Float
+  
+  // Documents
+  registrationImage String?
+  insuranceImage    String?
+  
+  // Status
+  isActive          Boolean         @default(true)
+  isAvailable       Boolean         @default(true)
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  @@index([driverId])
+  @@index([plateNumber])
+  @@index([isAvailable])
+  @@map("vehicles")
+}

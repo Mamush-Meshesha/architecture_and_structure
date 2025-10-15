@@ -1,0 +1,479 @@
+version: '3.9'
+
+services:
+  # ==================== Infrastructure Services ====================
+  
+  # PostgreSQL - Auth Service
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: dexel-postgres-auth
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: ${AUTH_DB_USER:-dexel_auth}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-auth_secure_pass}
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-dexel_auth}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # PostgreSQL - Booking Service
+  postgres-booking:
+    image: postgres:16-alpine
+    container_name: dexel-postgres-booking
+    environment:
+      POSTGRES_DB: booking_db
+      POSTGRES_USER: ${BOOKING_DB_USER:-dexel_booking}
+      POSTGRES_PASSWORD: ${BOOKING_DB_PASSWORD:-booking_secure_pass}
+    volumes:
+      - postgres-booking-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BOOKING_DB_USER:-dexel_booking}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # PostgreSQL - Listing Service
+  postgres-listing:
+    image: postgres:16-alpine
+    container_name: dexel-postgres-listing
+    environment:
+      POSTGRES_DB: listing_db
+      POSTGRES_USER: ${LISTING_DB_USER:-dexel_listing}
+      POSTGRES_PASSWORD: ${LISTING_DB_PASSWORD:-listing_secure_pass}
+    volumes:
+      - postgres-listing-data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LISTING_DB_USER:-dexel_listing}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # PostgreSQL - Payment Service
+  postgres-payment:
+    image: postgres:16-alpine
+    container_name: dexel-postgres-payment
+    environment:
+      POSTGRES_DB: payment_db
+      POSTGRES_USER: ${PAYMENT_DB_USER:-dexel_payment}
+      POSTGRES_PASSWORD: ${PAYMENT_DB_PASSWORD:-payment_secure_pass}
+    volumes:
+      - postgres-payment-data:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PAYMENT_DB_USER:-dexel_payment}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis - Caching & Sessions
+  redis:
+    image: redis:7-alpine
+    container_name: dexel-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-redis_secure_pass} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ClickHouse - Analytics
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: dexel-clickhouse
+    environment:
+      CLICKHOUSE_DB: analytics_db
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-dexel_analytics}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_secure_pass}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    networks:
+      - dexel-network
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+
+  # Kafka (Redpanda) - Event Streaming
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    container_name: dexel-redpanda
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 1G
+      - --mode dev-container
+      - --default-log-level=info
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    ports:
+      - "18081:18081"
+      - "18082:18082"
+      - "19092:19092"
+      - "19644:9644"
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # MinIO - Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: dexel-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dexel_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secure_pass}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==================== Application Services ====================
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-api-gateway
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      AUTH_SERVICE_URL: http://auth-service:3001
+      BOOKING_SERVICE_URL: http://booking-service:3002
+      LISTING_SERVICE_URL: http://listing-service:3003
+      PRICING_SERVICE_URL: http://pricing-service:8000
+      PAYMENT_SERVICE_URL: http://payment-service:3004
+      NOTIFICATION_SERVICE_URL: http://notification-service:3005
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_change_in_production}
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX_REQUESTS: 100
+    ports:
+      - "3000:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-auth-service
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgresql://${AUTH_DB_USER:-dexel_auth}:${AUTH_DB_PASSWORD:-auth_secure_pass}@postgres-auth:5432/auth_db
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:-your_jwt_secret_change_in_production}
+      JWT_EXPIRES_IN: 7d
+      REFRESH_TOKEN_EXPIRES_IN: 30d
+      BCRYPT_ROUNDS: 12
+      OTP_EXPIRY_MINUTES: 10
+      SMS_PROVIDER_URL: ${SMS_PROVIDER_URL}
+      SMS_API_KEY: ${SMS_API_KEY}
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Booking Service
+  booking-service:
+    build:
+      context: ./services/booking-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-booking-service
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      DATABASE_URL: postgresql://${BOOKING_DB_USER:-dexel_booking}:${BOOKING_DB_PASSWORD:-booking_secure_pass}@postgres-booking:5432/booking_db
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      PRICING_SERVICE_URL: http://pricing-service:8000
+      NOTIFICATION_SERVICE_URL: http://notification-service:3005
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dexel_admin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio_secure_pass}
+      MINIO_BUCKET: bookings
+    depends_on:
+      postgres-booking:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Listing Service
+  listing-service:
+    build:
+      context: ./services/listing-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-listing-service
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      DATABASE_URL: postgresql://${LISTING_DB_USER:-dexel_listing}:${LISTING_DB_PASSWORD:-listing_secure_pass}@postgres-listing:5432/listing_db
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dexel_admin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio_secure_pass}
+      MINIO_BUCKET: listings
+    depends_on:
+      postgres-listing:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Pricing Service (Python FastAPI)
+  pricing-service:
+    build:
+      context: ./services/pricing-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-pricing-service
+    environment:
+      ENVIRONMENT: production
+      PORT: 8000
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      LOG_LEVEL: info
+      WORKERS: 4
+    depends_on:
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Payment Service
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-payment-service
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      DATABASE_URL: postgresql://${PAYMENT_DB_USER:-dexel_payment}:${PAYMENT_DB_PASSWORD:-payment_secure_pass}@postgres-payment:5432/payment_db
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      TELEBIRR_API_URL: ${TELEBIRR_API_URL}
+      TELEBIRR_API_KEY: ${TELEBIRR_API_KEY}
+      CBE_BIRR_API_URL: ${CBE_BIRR_API_URL}
+      CBE_BIRR_API_KEY: ${CBE_BIRR_API_KEY}
+      AWASH_BIRR_API_URL: ${AWASH_BIRR_API_URL}
+      AWASH_BIRR_API_KEY: ${AWASH_BIRR_API_KEY}
+      ECHAT_PAY_API_URL: ${ECHAT_PAY_API_URL}
+      ECHAT_PAY_API_KEY: ${ECHAT_PAY_API_KEY}
+    depends_on:
+      postgres-payment:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Analytics Service (Go)
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-analytics-service
+    environment:
+      ENVIRONMENT: production
+      KAFKA_BROKERS: redpanda:9092
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_DATABASE: analytics_db
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-dexel_analytics}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_secure_pass}
+      LOG_LEVEL: info
+    depends_on:
+      clickhouse:
+        condition: service_started
+      redpanda:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+
+  # Notification Service
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: dexel-notification-service
+    environment:
+      NODE_ENV: production
+      PORT: 3005
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis_secure_pass}@redis:6379
+      KAFKA_BROKERS: redpanda:9092
+      SMS_PROVIDER_URL: ${SMS_PROVIDER_URL}
+      SMS_API_KEY: ${SMS_API_KEY}
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY}
+      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST}
+      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT}
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  dexel-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
+
+volumes:
+  postgres-auth-data:
+    driver: local
+  postgres-booking-data:
+    driver: local
+  postgres-listing-data:
+    driver: local
+  postgres-payment-data:
+    driver: local
+  redis-data:
+    driver: local
+  clickhouse-data:
+    driver: local
+  redpanda-data:
+    driver: local
+  minio-data:
+    driver: local

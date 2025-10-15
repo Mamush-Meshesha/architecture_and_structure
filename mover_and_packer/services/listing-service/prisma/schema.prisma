@@ -1,0 +1,146 @@
+// Listing Service Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PropertyType {
+  APARTMENT
+  HOUSE
+  VILLA
+  STUDIO
+  CONDO
+  COMMERCIAL
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  RENTED
+  SOLD
+  INACTIVE
+  EXPIRED
+}
+
+enum ListingPurpose {
+  RENT
+  SALE
+}
+
+model Listing {
+  id                String          @id @default(uuid())
+  listingNumber     String          @unique
+  ownerId           String
+  
+  // Property Details
+  title             String
+  description       String
+  propertyType      PropertyType
+  purpose           ListingPurpose
+  
+  // Location
+  region            String
+  city              String
+  subcity           String?
+  woreda            String?
+  kebele            String?
+  address           String
+  latitude          Float?
+  longitude         Float?
+  
+  // Specifications
+  bedrooms          Int
+  bathrooms         Int
+  area              Float
+  areaUnit          String          @default("sqm")
+  floor             Int?
+  totalFloors       Int?
+  
+  // Pricing
+  price             Float
+  currency          String          @default("ETB")
+  priceNegotiable   Boolean         @default(false)
+  
+  // Amenities
+  hasParking        Boolean         @default(false)
+  hasGarden         Boolean         @default(false)
+  hasBalcony        Boolean         @default(false)
+  hasSecurity       Boolean         @default(false)
+  hasElevator       Boolean         @default(false)
+  hasGenerator      Boolean         @default(false)
+  hasWaterTank      Boolean         @default(false)
+  isFurnished       Boolean         @default(false)
+  
+  // Utilities
+  hasWater          Boolean         @default(true)
+  hasElectricity    Boolean         @default(true)
+  hasInternet       Boolean         @default(false)
+  
+  // Status
+  status            ListingStatus   @default(DRAFT)
+  isVerified        Boolean         @default(false)
+  isFeatured        Boolean         @default(false)
+  
+  // Metadata
+  views             Int             @default(0)
+  publishedAt       DateTime?
+  expiresAt         DateTime?
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  images            ListingImage[]
+  inquiries         Inquiry[]
+  
+  @@index([ownerId])
+  @@index([listingNumber])
+  @@index([status])
+  @@index([propertyType])
+  @@index([purpose])
+  @@index([city])
+  @@index([price])
+  @@map("listings")
+}
+
+model ListingImage {
+  id                String          @id @default(uuid())
+  listingId         String
+  listing           Listing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  
+  url               String
+  caption           String?
+  order             Int             @default(0)
+  isPrimary         Boolean         @default(false)
+  
+  createdAt         DateTime        @default(now())
+  
+  @@index([listingId])
+  @@map("listing_images")
+}
+
+model Inquiry {
+  id                String          @id @default(uuid())
+  listingId         String
+  listing           Listing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  
+  userId            String
+  name              String
+  phone             String
+  email             String?
+  message           String
+  
+  isRead            Boolean         @default(false)
+  respondedAt       DateTime?
+  
+  createdAt         DateTime        @default(now())
+  
+  @@index([listingId])
+  @@index([userId])
+  @@map("inquiries")
+}

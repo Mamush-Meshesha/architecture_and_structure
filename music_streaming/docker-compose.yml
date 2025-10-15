@@ -1,0 +1,267 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: dexel-postgres
+    environment:
+      POSTGRES_USER: dexel
+      POSTGRES_PASSWORD: dexel_password
+      POSTGRES_DB: dexel_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dexel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: dexel-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: dexel-clickhouse
+    environment:
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_USER: dexel
+      CLICKHOUSE_PASSWORD: dexel_password
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    networks:
+      - dexel-network
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: dexel-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - dexel-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: dexel-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: dexel-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: dexel
+      MINIO_ROOT_PASSWORD: dexel_password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - dexel-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Application Services
+
+  gateway-service:
+    build:
+      context: ./services/gateway-service
+      dockerfile: Dockerfile
+    container_name: dexel-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      NODE_ENV: development
+      PORT: 8000
+      AUTH_SERVICE_URL: http://auth-service:3001
+      PLAYLIST_SERVICE_URL: http://playlist-service:3002
+      STREAMING_SERVICE_URL: http://streaming-service:8080
+      AI_SERVICE_URL: http://ai-service:8001
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your_jwt_secret_here
+    depends_on:
+      - redis
+      - auth-service
+      - playlist-service
+    networks:
+      - dexel-network
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: dexel-auth
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://dexel:dexel_password@postgres:5432/dexel_db
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your_jwt_secret_here
+      JWT_EXPIRES_IN: 7d
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - dexel-network
+    restart: unless-stopped
+
+  playlist-service:
+    build:
+      context: ./services/playlist-service
+      dockerfile: Dockerfile
+    container_name: dexel-playlist
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DATABASE_URL: postgresql://dexel:dexel_password@postgres:5432/dexel_db
+      REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - dexel-network
+    restart: unless-stopped
+
+  streaming-service:
+    build:
+      context: ./services/streaming-service
+      dockerfile: Dockerfile
+    container_name: dexel-streaming
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: dexel
+      MINIO_SECRET_KEY: dexel_password
+      MINIO_USE_SSL: "false"
+      REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      - minio
+      - redis
+      - kafka
+    networks:
+      - dexel-network
+    restart: unless-stopped
+
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: dexel-analytics
+    ports:
+      - "8081:8081"
+    environment:
+      PORT: 8081
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 9000
+      CLICKHOUSE_USER: dexel
+      CLICKHOUSE_PASSWORD: dexel_password
+      CLICKHOUSE_DATABASE: analytics
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      - clickhouse
+      - kafka
+    networks:
+      - dexel-network
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: ./services/ai-service
+      dockerfile: Dockerfile
+    container_name: dexel-ai
+    ports:
+      - "8001:8001"
+    environment:
+      PORT: 8001
+      DATABASE_URL: postgresql://dexel:dexel_password@postgres:5432/dexel_db
+      REDIS_URL: redis://redis:6379
+      MODEL_CACHE_DIR: /app/models
+    volumes:
+      - ai_models:/app/models
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - dexel-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+networks:
+  dexel-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  clickhouse_data:
+  kafka_data:
+  minio_data:
+  ai_models:

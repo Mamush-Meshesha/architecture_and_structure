@@ -1,0 +1,157 @@
+// Payment Service Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PaymentMethod {
+  TELEBIRR
+  CBE_BIRR
+  AWASH_BIRR
+  ECHAT_PAY
+  BANK_TRANSFER
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum TransactionType {
+  BOOKING_PAYMENT
+  LISTING_FEE
+  COMMISSION
+  REFUND
+  WITHDRAWAL
+}
+
+model Payment {
+  id                String          @id @default(uuid())
+  transactionId     String          @unique
+  
+  // User & Reference
+  userId            String
+  referenceId       String
+  referenceType     TransactionType
+  
+  // Amount
+  amount            Float
+  currency          String          @default("ETB")
+  
+  // Payment Method
+  paymentMethod     PaymentMethod
+  
+  // Status
+  status            PaymentStatus   @default(PENDING)
+  
+  // Gateway Details
+  gatewayTransactionId String?
+  gatewayResponse   String?
+  
+  // Metadata
+  description       String?
+  metadata          String?
+  
+  // Timestamps
+  initiatedAt       DateTime        @default(now())
+  completedAt       DateTime?
+  failedAt          DateTime?
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  refunds           Refund[]
+  
+  @@index([userId])
+  @@index([transactionId])
+  @@index([referenceId])
+  @@index([status])
+  @@index([paymentMethod])
+  @@map("payments")
+}
+
+model Refund {
+  id                String          @id @default(uuid())
+  paymentId         String
+  payment           Payment         @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  
+  amount            Float
+  reason            String
+  status            PaymentStatus   @default(PENDING)
+  
+  gatewayRefundId   String?
+  processedAt       DateTime?
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+model Wallet {
+  id                String          @id @default(uuid())
+  userId            String          @unique
+  
+  balance           Float           @default(0)
+  currency          String          @default("ETB")
+  
+  isActive          Boolean         @default(true)
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  // Relations
+  transactions      WalletTransaction[]
+  
+  @@index([userId])
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id                String          @id @default(uuid())
+  walletId          String
+  wallet            Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  
+  type              String
+  amount            Float
+  balanceBefore     Float
+  balanceAfter      Float
+  description       String?
+  referenceId       String?
+  
+  createdAt         DateTime        @default(now())
+  
+  @@index([walletId])
+  @@index([createdAt])
+  @@map("wallet_transactions")
+}
+
+model PaymentGatewayConfig {
+  id                String          @id @default(uuid())
+  gateway           PaymentMethod   @unique
+  
+  isActive          Boolean         @default(true)
+  apiKey            String?
+  apiSecret         String?
+  merchantId        String?
+  webhookUrl        String?
+  
+  config            String?
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  
+  @@map("payment_gateway_configs")
+}
