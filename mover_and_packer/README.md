@@ -123,6 +123,13 @@ docker-compose logs -f service-name
 
 `services/` - Microservices | `shared/` - Common code | `kubernetes/` - K8s | `tests/` - Test suites
 
+## 📖 Documentation
+
+**⭐ [GETTING_STARTED.md](GETTING_STARTED.md)** - Setup, add features, scale (99 lines)
+
+**Detailed Docs:**
+- [docs/BACKEND_ARCHITECTURE.md](docs/BACKEND_ARCHITECTURE.md) - Backend architecture & design
+
 ## 🚢 Deployment
 
 **Docker Compose:**
@@ -140,10 +147,6 @@ kubectl get pods
 
 **Pricing Service:** http://localhost:8000/docs
 **Gateway:** http://localhost:3000/api-docs
-
-## 🎯 Adding Features & Scaling
-
-See [GETTING_STARTED.md](GETTING_STARTED.md) for complete guide.
 
 ## 🤝 Contributing
 
